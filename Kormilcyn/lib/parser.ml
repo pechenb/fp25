@@ -12,7 +12,7 @@ let is_space = function
 
 let spaces = skip_while is_space
 
-let skip_spc p =
+let no_ws p =
   let* _ = spaces
   and+ payload = p
   and+ _ = spaces in
@@ -38,8 +38,21 @@ let integer =
 
 type dispatch =
   { apps : dispatch -> string Ast.t Angstrom.t
-  ; single : dispatch -> string Ast.t Angstrom.t
+  ; atom : dispatch -> string Ast.t Angstrom.t
+  ; mul_div : dispatch -> string Ast.t Angstrom.t
+  ; add_sub : dispatch -> string Ast.t Angstrom.t
   }
+
+let chainl1 p op =
+  let rec loop acc =
+    (let* f = op
+     and+ y = p in
+     loop (f acc y))
+    <|> return acc
+  in
+  let* x = p in
+  loop x
+;;
 
 type error = [ `Parsing_error of string ]
 
@@ -48,62 +61,86 @@ let pp_error ppf = function
 ;;
 
 let parse_miniml =
-  let single pack =
+  let atom pack =
     fix (fun _ ->
       choice
-        [ (* аппликация в скобках *)
-          (let* _ = skip_spc (char '(')
-           and+ elem = pack.apps pack
-           and+ _ = skip_spc (char ')') <?> "Parentheses expected" in
-           return elem)
+        [ (* TODO: binop *)
+          (* TODO: parens in arithmetic *)
+          (*   (let* add = pack.binop pack Ast.Add in *)
+          (*    return add) *)
+          (* ; (let* sub = pack.binop pack Ast.Sub in *)
+          (*    return sub) *)
+          (* ; (let* mul = pack.binop pack Ast.Mul in *)
+          (*    return mul) *)
+          (* ; (let* div = pack.binop pack Ast.Div in *)
+          (*    return div) *)
+          (* аппликация в скобках *)
+          (let* _ = no_ws (char '(')
+           and+ tokens = pack.apps pack
+           and+ _ = no_ws (char ')') <?> "Parentheses expected" in
+           return tokens)
           (* функция *)
-        ; (let* _ = skip_spc (string "fun")
-           and+ var = skip_spc varname
-           and+ _ = skip_spc (string "->")
+        ; (let* _ = no_ws (string "fun")
+           and+ var = no_ws varname
+           and+ _ = no_ws (string "->")
            and+ body = pack.apps pack in
            return (Ast.Fun (var, body)))
           (* if *)
-        ; (let* _ = skip_spc (string "if")
+        ; (let* _ = no_ws (string "if")
            and+ cond = pack.apps pack
-           and+ _ = skip_spc (string "then")
+           and+ _ = no_ws (string "then")
            and+ e1 = pack.apps pack
-           and+ _ = skip_spc (string "else")
+           and+ _ = no_ws (string "else")
            and+ e2 = pack.apps pack in
            return (Ast.If (cond, e1, e2)))
           (* let *)
-        ; (let* _ = skip_spc (string "let")
-           and+ var = skip_spc varname
-           and+ _ = skip_spc (char '=')
+        ; (let* _ = no_ws (string "let")
+           and+ var = no_ws varname
+           and+ _ = no_ws (char '=')
            and+ e1 = pack.apps pack
-           and+ _ = skip_spc (string "in")
+           and+ _ = no_ws (string "in")
            and+ e2 = pack.apps pack in
            return (Ast.Let (var, e1, e2)))
           (* переменная *)
-        ; (let* s = skip_spc varname in
+        ; (let* s = no_ws varname in
            return (Ast.Var s))
           (* целое число *)
-        ; (let* i = skip_spc integer in
+        ; (let* i = no_ws integer in
            return (Ast.Int (int_of_string i)))
-          (* TODO: binop *)
         ])
-  in
-  let apps pack =
+  and apps pack =
     let* app =
       many1
-        (let* elem = skip_spc (pack.single pack) in
-         return elem)
+        (let* token = no_ws (pack.atom pack) in
+         return token)
     in
     match app with
     | [] -> fail "bad syntax"
     | x :: xs -> return @@ List.fold_left (fun l r -> Ast.App (l, r)) x xs
+  and mul_div pack =
+    let op =
+      choice
+        [ no_ws (char '*') *> return (fun l r -> Ast.Bin (Ast.Mul, l, r))
+        ; no_ws (char '/') *> return (fun l r -> Ast.Bin (Ast.Div, l, r))
+        ]
+    in
+    chainl1 (pack.apps pack) op
+  and add_sub pack =
+    let op =
+      choice
+        [ no_ws (char '+') *> return (fun l r -> Ast.Bin (Ast.Add, l, r))
+        ; no_ws (char '-') *> return (fun l r -> Ast.Bin (Ast.Sub, l, r))
+        ]
+    in
+    chainl1 (pack.mul_div pack) op
   in
-  { single; apps }
+  { atom; apps; mul_div; add_sub }
 ;;
 
 let parse str =
   match
     Angstrom.parse_string
-      (parse_miniml.apps parse_miniml)
+      (parse_miniml.add_sub parse_miniml)
       ~consume:Angstrom.Consume.All
       str
   with
