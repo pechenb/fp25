@@ -65,18 +65,9 @@ let parse_miniml =
     fix (fun _ ->
       choice
         [ (* TODO: binop *)
-          (* TODO: parens in arithmetic *)
-          (*   (let* add = pack.binop pack Ast.Add in *)
-          (*    return add) *)
-          (* ; (let* sub = pack.binop pack Ast.Sub in *)
-          (*    return sub) *)
-          (* ; (let* mul = pack.binop pack Ast.Mul in *)
-          (*    return mul) *)
-          (* ; (let* div = pack.binop pack Ast.Div in *)
-          (*    return div) *)
           (* аппликация в скобках *)
           (let* _ = no_ws (char '(')
-           and+ tokens = pack.apps pack
+           and+ tokens = pack.add_sub pack
            and+ _ = no_ws (char ')') <?> "Parentheses expected" in
            return tokens)
           (* функция *)
